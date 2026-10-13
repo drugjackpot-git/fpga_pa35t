@@ -7,6 +7,9 @@
 //                     register writes would NOT update the outputs!)
 //  3) MODE 0 : send 0xC800 once  -> broadcast 2048 : all 8 ch ~2.048V (multimeter)
 //     MODE 1 : sawtooth on ch A  -> 0x0000, 0x0001, ... 0x0FFF, 0x0000 ... (scope)
+//     MODE 2 : alternate frames
+//                ch A <- sawtooth          (test signal source)
+//                ch B <- in_code[11:0]     (e.g. ADC value converted to DAC code)
 //////////////////////////////////////////////////////////////////////////////////
 
 module dac_ctrl #(
@@ -15,6 +18,8 @@ module dac_ctrl #(
 )(
     input             clk,
     input             rst_n,
+
+    input      [11:0] in_code,          // MODE 2 : value for ch B
 
     // to dac_spi
     output reg        start,
@@ -36,12 +41,14 @@ module dac_ctrl #(
     reg [2:0]  state;
     reg [15:0] waitcnt;
     reg [11:0] saw;
+    reg        sel_b;                   // MODE 2 : 0 -> ch A frame, 1 -> ch B frame
 
     always @(posedge clk) begin
         if (!rst_n) begin
             state   <= C_INIT;
             waitcnt <= 16'd0;
             saw     <= 12'd0;
+            sel_b   <= 1'b0;
             start   <= 1'b0;
             data    <= 16'd0;
         end else begin
@@ -70,8 +77,12 @@ module dac_ctrl #(
 
             C_SEND: begin
                 if (!busy) begin
-                    data  <= (MODE == 0) ? CMD_BROADCAST
-                                         : {4'h0, saw};     // 0x0 = write ch A
+                    case (MODE)
+                        0:       data <= CMD_BROADCAST;
+                        1:       data <= {4'h0, saw};                 // ch A
+                        default: data <= sel_b ? {4'h1, in_code}      // ch B
+                                               : {4'h0, saw};         // ch A
+                    endcase
                     start <= 1'b1;
                     state <= C_WAIT;
                 end
@@ -79,12 +90,19 @@ module dac_ctrl #(
 
             C_WAIT: begin
                 if (done) begin
-                    if (MODE == 0) begin
-                        state <= C_STOP;
-                    end else begin
-                        saw   <= saw + 12'd1;               // wraps 4095 -> 0
-                        state <= C_SEND;
-                    end
+                    case (MODE)
+                        0: state <= C_STOP;
+                        1: begin
+                            saw   <= saw + 12'd1;
+                            state <= C_SEND;
+                        end
+                        default: begin
+                            if (sel_b)                  // advance sawtooth after each A+B pair
+                                saw <= saw + 12'd1;
+                            sel_b <= ~sel_b;
+                            state <= C_SEND;
+                        end
+                    endcase
                 end
             end
 

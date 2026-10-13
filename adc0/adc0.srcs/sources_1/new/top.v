@@ -1,11 +1,12 @@
 `timescale 1ns / 1ps
 //////////////////////////////////////////////////////////////////////////////////
-// top : M3/M4 - AD7606 read + DAC test signal
+// top : M5 - ADC -> DAC loop (follow test)
 //
-//   DAC  : DAC_TEST_MODE 1 -> sawtooth 0~4.1V on OUT1 (DAC ch A)
-//   ADC  : 8ch @ 200kSPS, +-5V range, results in adc_ch_data
-//   M4   : wire DAC OUT1 -> ADC IN1, watch adc_v1 ramp in ILA
-//          (signals with mark_debug are picked up by "Set Up Debug")
+//   DAC OUT1 (ch A) : sawtooth 0~4.1V  (test signal)
+//   wire  DAC OUT1  -> ADC IN2
+//   ADC V2 (+-5V, 16bit signed) -> DAC code (0~4095, 1mV/LSB) -> DAC OUT2 (ch B)
+//   scope : CH1 = OUT1, CH2 = OUT2  -> OUT2 should follow OUT1
+//           (5us staircase, delayed by ~5-7us)
 //////////////////////////////////////////////////////////////////////////////////
 
 module top(
@@ -33,7 +34,7 @@ module top(
     output        led
     );
 
-    localparam DAC_TEST_MODE = 1;     // sawtooth on OUT1
+    localparam DAC_TEST_MODE = 2;     // OUT1 sawtooth, OUT2 = ADC V2
 
     // ------------------------------------------------------------------
     // clock / reset
@@ -69,9 +70,11 @@ module top(
     // ------------------------------------------------------------------
     wire        dac_start, dac_busy, dac_done;
     wire [15:0] dac_data;
+    reg  [11:0] dac_code_b;             // ADC V2 converted to DAC code (see below)
 
     dac_ctrl #(.MODE(DAC_TEST_MODE), .INIT_WAIT(1000)) u_dac_ctrl (
         .clk(clk), .rst_n(rst_n),
+        .in_code(dac_code_b),
         .start(dac_start), .data(dac_data), .busy(dac_busy), .done(dac_done));
 
     dac_spi #(.HALF(2)) u_dac_spi (
@@ -95,10 +98,35 @@ module top(
         .frst_err(adc_frst_err), .overrun(adc_overrun));
 
     // ------------------------------------------------------------------
-    // debug taps for ILA (M4)
+    // ADC code -> DAC code
+    //   ADC (+-5V)   : code = V / 5     * 32768
+    //   DAC (4.096V) : code = V / 4.096 * 4096   (= V in mV)
+    //   DAC = ADC * 5000 / 32768 = ADC * 625 / 4096   -> (ADC * 625) >>> 12
+    //   clamp to 0..4095 (DAC cannot output negative voltage)
+    // ------------------------------------------------------------------
+    wire signed [15:0] adc_v2_s = adc_ch_data[31:16];
+    wire signed [26:0] prod     = adc_v2_s * $signed(11'd625);
+    wire signed [14:0] scaled   = prod >>> 12;              // -5000 .. +5000
+
+    always @(posedge clk) begin
+        if (!rst_n)
+            dac_code_b <= 12'd0;
+        else if (adc_valid) begin
+            if (scaled < 0)
+                dac_code_b <= 12'd0;
+            else if (scaled > 15'sd4095)
+                dac_code_b <= 12'd4095;
+            else
+                dac_code_b <= scaled[11:0];
+        end
+    end
+
+    // ------------------------------------------------------------------
+    // debug taps for ILA
     // ------------------------------------------------------------------
     (* mark_debug = "true" *) wire [15:0] adc_v1 = adc_ch_data[15:0];
     (* mark_debug = "true" *) wire [15:0] adc_v2 = adc_ch_data[31:16];
+    (* mark_debug = "true" *) wire [11:0] dbg_dac_b    = dac_code_b;
     (* mark_debug = "true" *) wire        dbg_valid    = adc_valid;
     (* mark_debug = "true" *) wire        dbg_frst_err = adc_frst_err;
     (* mark_debug = "true" *) wire        dbg_overrun  = adc_overrun;
