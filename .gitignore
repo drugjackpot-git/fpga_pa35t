@@ -1,0 +1,17 @@
+# Vivado 생성물
+*.cache/
+*.runs/
+*.hw/
+*.sim/
+*.ip_user_files/
+*.gen/
+.Xil/
+*.jou
+*.log
+*.str
+*.wdb
+*.backup.*
+
+# IP는 .xci만 남기고 나머지 생성 파일 제외
+**/*.srcs/**/ip/*/*
+!**/*.srcs/**/ip/*/*.xci
