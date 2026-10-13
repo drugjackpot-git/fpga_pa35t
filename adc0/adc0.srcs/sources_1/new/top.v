@@ -29,22 +29,22 @@ module top(
 
 
     wire clk;
-    wire rst;
+    wire rst_n;
     
     clk_wiz_0 clkgen (
         .clk_out1(clk),     // output clk_out1
-        .locked(rst),       // output locked
+        .locked(rst_n),       // output locked
         .clk_in1_p(clkin_p),    // input clk_in1_p
         .clk_in1_n(clkin_n));    // input clk_in1_n
 
-    reg [19:0] cnt;
+    reg [25:0] cnt;
     always @(posedge clk)
-        if (~rst)
+        if (~rst_n)
             cnt <= 20'd0;
         else
             cnt <= cnt + 20'd1;
     
-    assign led = cnt[19];
+    assign led = cnt[25];
 
 
 
